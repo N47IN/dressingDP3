@@ -104,7 +104,7 @@ def get_end_effector_pose(env):
 
 def calculate_eef_delta_movement(current_pose, previous_pose):
     """
-    Calculate delta movement of end-effector between frames.
+    Calculate delta movement of end-effector between frames in 6D format.
     
     Args:
         current_pose: Tuple of (position, orientation) for current frame
@@ -112,13 +112,14 @@ def calculate_eef_delta_movement(current_pose, previous_pose):
     
     Returns:
         delta_pos: Position delta (3D vector)
-        delta_ori: Orientation delta (quaternion difference)
+        delta_ori: Orientation delta (3D axis-angle vector)
         delta_pos_magnitude: Scalar magnitude of position change
         delta_ori_magnitude: Scalar magnitude of orientation change
+        delta_6d: 6D delta EEF action [pos_delta(3D), rot_delta(3D axis-angle)]
     """
     if previous_pose is None:
         # First frame - no movement
-        return np.zeros(3), np.zeros(4), 0.0, 0.0
+        return np.zeros(3), np.zeros(3), 0.0, 0.0, np.zeros(6)
     
     current_pos, current_ori = current_pose
     previous_pos, previous_ori = previous_pose
@@ -127,27 +128,56 @@ def calculate_eef_delta_movement(current_pose, previous_pose):
     delta_pos = current_pos - previous_pos
     delta_pos_magnitude = np.linalg.norm(delta_pos)
     
-    # Calculate orientation delta (quaternion difference)
-    # For quaternions, we need to handle the sign ambiguity
-    # Use the shortest path between orientations
-    dot_product = np.dot(current_ori, previous_ori)
-    if dot_product < 0:
-        # Flip one quaternion to ensure shortest path
-        previous_ori = -previous_ori
-        dot_product = -dot_product
+    # Calculate orientation delta as axis-angle using scipy (same as dressing_sim)
+    try:
+        from scipy.spatial.transform import Rotation as R
+        
+        # Create rotation objects from quaternions
+        # Note: PyBullet returns quaternions as [x, y, z, w] but scipy expects [w, x, y, z]
+        current_quat = [current_ori[3], current_ori[0], current_ori[1], current_ori[2]]  # Convert to [w, x, y, z]
+        previous_quat = [previous_ori[3], previous_ori[0], previous_ori[1], previous_ori[2]]  # Convert to [w, x, y, z]
+        
+        current_R = R.from_quat(current_quat)
+        previous_R = R.from_quat(previous_quat)
+        
+        # Compute relative rotation: current * inverse(previous)
+        relative_R = current_R * previous_R.inv()
+        
+        # Convert to axis-angle representation
+        delta_ori = relative_R.as_rotvec()  # This gives us axis-angle format
+        delta_ori_magnitude = np.linalg.norm(delta_ori)
+        
+    except ImportError:
+        # Fallback: compute axis-angle directly from quaternions
+        # For small rotations, we can approximate
+        dot_product = np.dot(current_ori, previous_ori)
+        dot_product = np.clip(dot_product, -1.0, 1.0)
+        
+        angle = 2 * np.arccos(abs(dot_product))
+        delta_ori_magnitude = angle
+        
+        if angle > 1e-6:
+            # Compute rotation axis (simplified)
+            # For small rotations, the axis is approximately the cross product
+            axis = np.cross(previous_ori[:3], current_ori[:3])
+            if np.linalg.norm(axis) > 1e-6:
+                axis = axis / np.linalg.norm(axis)
+            else:
+                # If no clear axis, use a default
+                axis = np.array([0, 0, 1])
+            
+            # Sign of angle based on dot product
+            if dot_product < 0:
+                angle = -angle
+            
+            delta_ori = axis * angle
+        else:
+            delta_ori = np.zeros(3)
     
-    # Clamp dot product to avoid numerical issues
-    dot_product = np.clip(dot_product, -1.0, 1.0)
+    # Combine into 6D delta EEF action: [pos_delta(3D), rot_delta(3D axis-angle)]
+    delta_6d = np.concatenate([delta_pos, delta_ori])
     
-    # Calculate angle between orientations
-    angle = 2 * np.arccos(dot_product)
-    delta_ori_magnitude = np.abs(angle)
-    
-    # For quaternion delta, we can use relative rotation
-    # This is a simplified approach - in practice you might want more sophisticated quaternion math
-    delta_ori = current_ori - previous_ori  # Simple difference (not proper quaternion subtraction)
-    
-    return delta_pos, delta_ori, delta_pos_magnitude, delta_ori_magnitude
+    return delta_pos, delta_ori, delta_pos_magnitude, delta_ori_magnitude, delta_6d
 
 def get_force_information_fast(env):
     """Get force information from the environment - optimized version that only queries relevant contacts"""
@@ -1195,7 +1225,7 @@ def collect_episode(vec_env, episode_num, dataset_path, episode_length=100, nois
         
         # Calculate EEF delta movement
         current_eef_pose = (ee_pos, ee_orn)
-        delta_pos, delta_ori, delta_pos_mag, delta_ori_mag = calculate_eef_delta_movement(current_eef_pose, previous_eef_pose)
+        delta_pos, delta_ori, delta_pos_mag, delta_ori_mag, delta_6d = calculate_eef_delta_movement(current_eef_pose, previous_eef_pose)
         
         # Update episode delta statistics
         episode_delta_stats['total_pos_delta'] += delta_pos_mag
@@ -1241,6 +1271,7 @@ def collect_episode(vec_env, episode_num, dataset_path, episode_length=100, nois
             'delta_ori': delta_ori,
             'delta_pos_magnitude': delta_pos_mag,
             'delta_ori_magnitude': delta_ori_mag,
+            'delta_6d': delta_6d,  # 6D delta EEF action [pos_delta(3D), rot_delta(3D axis-angle)]
             'action': action_np,
             'reward': 0.0,
             'not_done': True,
@@ -1378,7 +1409,7 @@ def main():
             'cyan_arm_downsampling'
         ],
         'transition_keys': [
-            'obs', 'pcd_cyan', 'pcd_arm', 'pcd_combined', 'gripper_point', 'gripper_orientation', 'delta_pos', 'delta_ori', 'delta_pos_magnitude', 'delta_ori_magnitude', 'action', 'reward', 'not_done',
+            'obs', 'pcd_cyan', 'pcd_arm', 'pcd_combined', 'gripper_point', 'gripper_orientation', 'delta_pos', 'delta_ori', 'delta_pos_magnitude', 'delta_ori_magnitude', 'delta_6d', 'action', 'reward', 'not_done',
             'total_force', 'force_vectors', 'state', 'frame', 'success'
         ]
     }

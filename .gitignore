@@ -30,6 +30,7 @@ MANIFEST
 *.pt
 *.zip
 dp3_dataset/
+dp3_transitions_dataset_fixedd_quat
 dp3_transitions_dataset
 dp3_transitions_dataset_vision
 dp3_transitions_dataset_vision_revised

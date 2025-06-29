@@ -47,6 +47,13 @@ def extract_episode_data(transitions):
     successes = []
     pointcloud_stats = []
     
+    # Delta EEF data
+    delta_positions = []
+    delta_orientations = []
+    delta_pos_magnitudes = []
+    delta_ori_magnitudes = []
+    delta_6d_actions = []
+    
     for i, transition in enumerate(transitions):
         frames.append(i)
         
@@ -90,6 +97,14 @@ def extract_episode_data(transitions):
                 eef_pos = eef_pos.flatten()
             eef_positions.append(eef_pos)
         
+        # EEF orientations
+        if 'gripper_orientation' in transition:
+            eef_orn = transition['gripper_orientation']
+            # Ensure EEF orientation is 1D
+            if isinstance(eef_orn, np.ndarray):
+                eef_orn = eef_orn.flatten()
+            eef_orientations.append(eef_orn)
+        
         # States
         if 'state' in transition:
             state = transition['state']
@@ -101,6 +116,41 @@ def extract_episode_data(transitions):
         # Success
         if 'success' in transition:
             successes.append(transition['success'])
+        
+        # Delta EEF data
+        if 'delta_pos' in transition:
+            delta_pos = transition['delta_pos']
+            if isinstance(delta_pos, np.ndarray):
+                delta_pos = delta_pos.flatten()
+            delta_positions.append(delta_pos)
+        else:
+            delta_positions.append(np.zeros(3))
+        
+        if 'delta_ori' in transition:
+            delta_ori = transition['delta_ori']
+            if isinstance(delta_ori, np.ndarray):
+                delta_ori = delta_ori.flatten()
+            delta_orientations.append(delta_ori)
+        else:
+            delta_orientations.append(np.zeros(3))
+        
+        if 'delta_pos_magnitude' in transition:
+            delta_pos_magnitudes.append(float(transition['delta_pos_magnitude']))
+        else:
+            delta_pos_magnitudes.append(0.0)
+        
+        if 'delta_ori_magnitude' in transition:
+            delta_ori_magnitudes.append(float(transition['delta_ori_magnitude']))
+        else:
+            delta_ori_magnitudes.append(0.0)
+        
+        if 'delta_6d' in transition:
+            delta_6d = transition['delta_6d']
+            if isinstance(delta_6d, np.ndarray):
+                delta_6d = delta_6d.flatten()
+            delta_6d_actions.append(delta_6d)
+        else:
+            delta_6d_actions.append(np.zeros(6))
         
         # Pointcloud statistics
         pcd_stats = {}
@@ -122,9 +172,15 @@ def extract_episode_data(transitions):
         'forces': np.array(forces),
         'force_vectors': np.array(force_vectors),
         'eef_positions': np.array(eef_positions),
+        'eef_orientations': np.array(eef_orientations),
         'states': np.array(states),
         'successes': np.array(successes),
-        'pointcloud_stats': pointcloud_stats
+        'pointcloud_stats': pointcloud_stats,
+        'delta_positions': np.array(delta_positions),
+        'delta_orientations': np.array(delta_orientations),
+        'delta_pos_magnitudes': np.array(delta_pos_magnitudes),
+        'delta_ori_magnitudes': np.array(delta_ori_magnitudes),
+        'delta_6d_actions': np.array(delta_6d_actions)
     }
 
 def plot_eef_trajectory(eef_positions, title="End-Effector Trajectory"):
@@ -326,6 +382,135 @@ def plot_pointcloud_stats(pointcloud_stats, frames):
     plt.tight_layout()
     return fig
 
+def plot_delta_eef_actions(delta_6d_actions, frames):
+    """Plot 6D delta EEF actions over the episode"""
+    if len(delta_6d_actions) == 0:
+        return None
+    
+    delta_6d_actions = np.array(delta_6d_actions)
+    
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    axes = axes.flatten()
+    
+    # Component names for 6D delta EEF actions
+    component_names = ['Pos Delta X', 'Pos Delta Y', 'Pos Delta Z', 
+                      'Rot Delta X', 'Rot Delta Y', 'Rot Delta Z']
+    colors = ['red', 'green', 'blue', 'orange', 'purple', 'brown']
+    
+    for i in range(6):
+        if i < len(axes):
+            axes[i].plot(frames, delta_6d_actions[:, i], color=colors[i], linewidth=2)
+            axes[i].set_xlabel('Frame')
+            axes[i].set_ylabel('Delta Value')
+            axes[i].set_title(f'{component_names[i]}')
+            axes[i].grid(True, alpha=0.3)
+            
+            # Add zero line for reference
+            axes[i].axhline(y=0, color='black', linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    return fig
+
+def plot_delta_eef_magnitudes(delta_pos_magnitudes, delta_ori_magnitudes, frames):
+    """Plot delta EEF magnitude statistics over the episode"""
+    if len(delta_pos_magnitudes) == 0:
+        return None
+    
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    
+    # Position delta magnitudes
+    axes[0, 0].plot(frames, delta_pos_magnitudes, 'b-', linewidth=2, label='Position Delta')
+    axes[0, 0].set_xlabel('Frame')
+    axes[0, 0].set_ylabel('Magnitude (m)')
+    axes[0, 0].set_title('Position Delta Magnitudes')
+    axes[0, 0].grid(True, alpha=0.3)
+    axes[0, 0].legend()
+    
+    # Orientation delta magnitudes
+    axes[0, 1].plot(frames, delta_ori_magnitudes, 'r-', linewidth=2, label='Orientation Delta')
+    axes[0, 1].set_xlabel('Frame')
+    axes[0, 1].set_ylabel('Magnitude (rad)')
+    axes[0, 1].set_title('Orientation Delta Magnitudes')
+    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].legend()
+    
+    # Combined magnitude (total movement)
+    total_magnitudes = np.sqrt(delta_pos_magnitudes**2 + delta_ori_magnitudes**2)
+    axes[1, 0].plot(frames, total_magnitudes, 'g-', linewidth=2, label='Total Delta')
+    axes[1, 0].set_xlabel('Frame')
+    axes[1, 0].set_ylabel('Magnitude')
+    axes[1, 0].set_title('Total Delta Magnitudes')
+    axes[1, 0].grid(True, alpha=0.3)
+    axes[1, 0].legend()
+    
+    # Statistics
+    axes[1, 1].text(0.1, 0.8, f'Position Delta Stats:', fontsize=12, transform=axes[1, 1].transAxes)
+    axes[1, 1].text(0.1, 0.7, f'  Mean: {np.mean(delta_pos_magnitudes):.6f} m', fontsize=10, transform=axes[1, 1].transAxes)
+    axes[1, 1].text(0.1, 0.6, f'  Max: {np.max(delta_pos_magnitudes):.6f} m', fontsize=10, transform=axes[1, 1].transAxes)
+    axes[1, 1].text(0.1, 0.5, f'  Std: {np.std(delta_pos_magnitudes):.6f} m', fontsize=10, transform=axes[1, 1].transAxes)
+    
+    axes[1, 1].text(0.1, 0.3, f'Orientation Delta Stats:', fontsize=12, transform=axes[1, 1].transAxes)
+    axes[1, 1].text(0.1, 0.2, f'  Mean: {np.mean(delta_ori_magnitudes):.6f} rad', fontsize=10, transform=axes[1, 1].transAxes)
+    axes[1, 1].text(0.1, 0.1, f'  Max: {np.max(delta_ori_magnitudes):.6f} rad', fontsize=10, transform=axes[1, 1].transAxes)
+    axes[1, 1].text(0.1, 0.0, f'  Std: {np.std(delta_ori_magnitudes):.6f} rad', fontsize=10, transform=axes[1, 1].transAxes)
+    
+    axes[1, 1].set_title('Delta Statistics')
+    axes[1, 1].axis('off')
+    
+    plt.tight_layout()
+    return fig
+
+def plot_delta_eef_3d_vectors(delta_positions, delta_orientations, frames):
+    """Plot 3D delta vectors over time"""
+    if len(delta_positions) == 0:
+        return None
+    
+    fig = plt.figure(figsize=(15, 5))
+    
+    # Position deltas in 3D
+    ax1 = fig.add_subplot(131, projection='3d')
+    delta_positions = np.array(delta_positions)
+    x, y, z = delta_positions[:, 0], delta_positions[:, 1], delta_positions[:, 2]
+    
+    # Color by frame number
+    colors = plt.cm.viridis(np.linspace(0, 1, len(frames)))
+    for i in range(len(frames)):
+        ax1.scatter(x[i], y[i], z[i], c=[colors[i]], s=50, alpha=0.7)
+    
+    ax1.set_xlabel('Delta X (m)')
+    ax1.set_ylabel('Delta Y (m)')
+    ax1.set_zlabel('Delta Z (m)')
+    ax1.set_title('Position Deltas in 3D')
+    
+    # Orientation deltas in 3D
+    ax2 = fig.add_subplot(132, projection='3d')
+    delta_orientations = np.array(delta_orientations)
+    x, y, z = delta_orientations[:, 0], delta_orientations[:, 1], delta_orientations[:, 2]
+    
+    for i in range(len(frames)):
+        ax2.scatter(x[i], y[i], z[i], c=[colors[i]], s=50, alpha=0.7)
+    
+    ax2.set_xlabel('Rot Delta X (rad)')
+    ax2.set_ylabel('Rot Delta Y (rad)')
+    ax2.set_zlabel('Rot Delta Z (rad)')
+    ax2.set_title('Orientation Deltas in 3D')
+    
+    # Magnitude over time
+    ax3 = fig.add_subplot(133)
+    pos_magnitudes = np.linalg.norm(delta_positions, axis=1)
+    ori_magnitudes = np.linalg.norm(delta_orientations, axis=1)
+    
+    ax3.plot(frames, pos_magnitudes, 'b-', linewidth=2, label='Position')
+    ax3.plot(frames, ori_magnitudes, 'r-', linewidth=2, label='Orientation')
+    ax3.set_xlabel('Frame')
+    ax3.set_ylabel('Magnitude')
+    ax3.set_title('Delta Magnitudes Over Time')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    return fig
+
 def create_frame_summary(transition, frame_idx):
     """Create a summary of a single frame"""
     print(f"\n{'='*60}")
@@ -358,6 +543,32 @@ def create_frame_summary(transition, frame_idx):
     if 'gripper_point' in transition:
         eef_pos = transition['gripper_point']
         print(f"EEF Position: [{eef_pos[0]:.4f}, {eef_pos[1]:.4f}, {eef_pos[2]:.4f}]")
+    
+    # EEF orientation
+    if 'gripper_orientation' in transition:
+        eef_orn = transition['gripper_orientation']
+        print(f"EEF Orientation: [{eef_orn[0]:.4f}, {eef_orn[1]:.4f}, {eef_orn[2]:.4f}, {eef_orn[3]:.4f}]")
+    
+    # Delta EEF information
+    print("\nDelta EEF Information:")
+    if 'delta_pos' in transition:
+        delta_pos = transition['delta_pos']
+        print(f"  Position Delta: [{delta_pos[0]:.6f}, {delta_pos[1]:.6f}, {delta_pos[2]:.6f}] m")
+    
+    if 'delta_ori' in transition:
+        delta_ori = transition['delta_ori']
+        print(f"  Orientation Delta: [{delta_ori[0]:.6f}, {delta_ori[1]:.6f}, {delta_ori[2]:.6f}] rad")
+    
+    if 'delta_pos_magnitude' in transition:
+        print(f"  Position Delta Magnitude: {transition['delta_pos_magnitude']:.6f} m")
+    
+    if 'delta_ori_magnitude' in transition:
+        print(f"  Orientation Delta Magnitude: {transition['delta_ori_magnitude']:.6f} rad")
+    
+    if 'delta_6d' in transition:
+        delta_6d = transition['delta_6d']
+        print(f"  6D Delta Action: [{delta_6d[0]:.6f}, {delta_6d[1]:.6f}, {delta_6d[2]:.6f}, {delta_6d[3]:.6f}, {delta_6d[4]:.6f}, {delta_6d[5]:.6f}]")
+        print(f"  6D Delta Magnitude: {np.linalg.norm(delta_6d):.6f}")
     
     # State
     if 'state' in transition:
@@ -402,6 +613,9 @@ def interactive_episode_viewer(transitions, episode_data):
     print("  a - Show actions plot")
     print("  r - Show rewards plot")
     print("  pc - Show pointcloud stats plot")
+    print("  de - Show delta EEF actions plot")
+    print("  dm - Show delta EEF magnitudes plot")
+    print("  dv - Show delta EEF 3D vectors plot")
     print("  all - Show all plots")
     print("  q/quit - Exit")
     print("  h/help - Show this help")
@@ -447,6 +661,18 @@ def interactive_episode_viewer(transitions, episode_data):
                 fig = plot_pointcloud_stats(data['pointcloud_stats'], data['frames'])
                 if fig:
                     plt.show()
+            elif command == 'de':
+                fig = plot_delta_eef_actions(data['delta_6d_actions'], data['frames'])
+                if fig:
+                    plt.show()
+            elif command == 'dm':
+                fig = plot_delta_eef_magnitudes(data['delta_pos_magnitudes'], data['delta_ori_magnitudes'], data['frames'])
+                if fig:
+                    plt.show()
+            elif command == 'dv':
+                fig = plot_delta_eef_3d_vectors(data['delta_positions'], data['delta_orientations'], data['frames'])
+                if fig:
+                    plt.show()
             elif command == 'all':
                 # Show all plots
                 fig1 = plot_eef_trajectory(data['eef_positions'])
@@ -454,6 +680,9 @@ def interactive_episode_viewer(transitions, episode_data):
                 fig3 = plot_actions(data['actions'], data['frames'])
                 fig4 = plot_rewards(data['rewards'], data['frames'])
                 fig5 = plot_pointcloud_stats(data['pointcloud_stats'], data['frames'])
+                fig6 = plot_delta_eef_actions(data['delta_6d_actions'], data['frames'])
+                fig7 = plot_delta_eef_magnitudes(data['delta_pos_magnitudes'], data['delta_ori_magnitudes'], data['frames'])
+                fig8 = plot_delta_eef_3d_vectors(data['delta_positions'], data['delta_orientations'], data['frames'])
                 
                 plt.show()
             elif command in ['h', 'help']:
@@ -467,6 +696,9 @@ def interactive_episode_viewer(transitions, episode_data):
                 print("  a - Show actions plot")
                 print("  r - Show rewards plot")
                 print("  pc - Show pointcloud stats plot")
+                print("  de - Show delta EEF actions plot")
+                print("  dm - Show delta EEF magnitudes plot")
+                print("  dv - Show delta EEF 3D vectors plot")
                 print("  all - Show all plots")
                 print("  q/quit - Exit")
                 print("  h/help - Show this help")
@@ -492,6 +724,9 @@ def main():
     parser.add_argument("--actions", action="store_true", help="Show actions plot")
     parser.add_argument("--rewards", action="store_true", help="Show rewards plot")
     parser.add_argument("--pointcloud", action="store_true", help="Show pointcloud stats plot")
+    parser.add_argument("--delta-eef", action="store_true", help="Show delta EEF actions plot")
+    parser.add_argument("--delta-magnitudes", action="store_true", help="Show delta EEF magnitudes plot")
+    parser.add_argument("--delta-vectors", action="store_true", help="Show delta EEF 3D vectors plot")
     
     args = parser.parse_args()
     
@@ -507,6 +742,15 @@ def main():
         print(f"  Robot type: {episode_data.get('robot_type', 'Unknown')}")
         print(f"  Expert policy: {episode_data.get('expert_policy', 'Unknown')}")
         
+        # Print delta EEF statistics if available
+        if len(data['delta_6d_actions']) > 0:
+            print(f"\nDelta EEF Statistics:")
+            print(f"  Position delta mean: {np.mean(data['delta_pos_magnitudes']):.6f} m")
+            print(f"  Position delta max: {np.max(data['delta_pos_magnitudes']):.6f} m")
+            print(f"  Orientation delta mean: {np.mean(data['delta_ori_magnitudes']):.6f} rad")
+            print(f"  Orientation delta max: {np.max(data['delta_ori_magnitudes']):.6f} rad")
+            print(f"  6D delta mean magnitude: {np.mean([np.linalg.norm(d) for d in data['delta_6d_actions']]):.6f}")
+        
         if args.frame is not None:
             if args.frame >= len(transitions):
                 print(f"Frame {args.frame} not available. Max frames: {len(transitions)}")
@@ -521,6 +765,9 @@ def main():
             fig3 = plot_actions(data['actions'], data['frames'])
             fig4 = plot_rewards(data['rewards'], data['frames'])
             fig5 = plot_pointcloud_stats(data['pointcloud_stats'], data['frames'])
+            fig6 = plot_delta_eef_actions(data['delta_6d_actions'], data['frames'])
+            fig7 = plot_delta_eef_magnitudes(data['delta_pos_magnitudes'], data['delta_ori_magnitudes'], data['frames'])
+            fig8 = plot_delta_eef_3d_vectors(data['delta_positions'], data['delta_orientations'], data['frames'])
             plt.show()
         else:
             # Show individual plots based on flags
@@ -541,18 +788,34 @@ def main():
                 fig = plot_pointcloud_stats(data['pointcloud_stats'], data['frames'])
                 if fig:
                     plt.show()
+            if args.delta_eef:
+                fig = plot_delta_eef_actions(data['delta_6d_actions'], data['frames'])
+                if fig:
+                    plt.show()
+            if args.delta_magnitudes:
+                fig = plot_delta_eef_magnitudes(data['delta_pos_magnitudes'], data['delta_ori_magnitudes'], data['frames'])
+                if fig:
+                    plt.show()
+            if args.delta_vectors:
+                fig = plot_delta_eef_3d_vectors(data['delta_positions'], data['delta_orientations'], data['frames'])
+                if fig:
+                    plt.show()
             
             # If no specific plots requested, show summary
-            if not any([args.trajectory, args.force, args.actions, args.rewards, args.pointcloud]):
+            if not any([args.trajectory, args.force, args.actions, args.rewards, args.pointcloud, 
+                       args.delta_eef, args.delta_magnitudes, args.delta_vectors]):
                 print("\nNo specific plots requested. Use --interactive for interactive mode or specify plots:")
                 print("  --trajectory: Show EEF trajectory")
                 print("  --force: Show force analysis")
                 print("  --actions: Show actions")
                 print("  --rewards: Show rewards")
                 print("  --pointcloud: Show pointcloud stats")
+                print("  --delta-eef: Show delta EEF actions")
+                print("  --delta-magnitudes: Show delta EEF magnitudes")
+                print("  --delta-vectors: Show delta EEF 3D vectors")
                 print("  --all-plots: Show all plots")
                 print("  --interactive: Interactive mode")
-            
+        
     except Exception as e:
         print(f"Error: {e}")
         import traceback
