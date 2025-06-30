@@ -30,7 +30,10 @@ MANIFEST
 *.pt
 *.zip
 dp3_dataset/
+updated_payload_hopefully_final_again
+dp3_transitions_dataset_final
 dp3_transitions_dataset_fixedd_quat
+dp3_transitions_dataset
 dp3_transitions_dataset
 dp3_transitions_dataset_vision
 dp3_transitions_dataset_vision_revised
